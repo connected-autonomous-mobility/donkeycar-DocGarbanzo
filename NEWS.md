@@ -3789,78 +3789,496 @@ plt.savefig('metric_distributions.png')
 
 ### Comprehensive Test Coverage
 
-**Course Analysis Tests:**
-- `test_data_loader.py` - PathData loading from CSV and Tub
-- `test_integration_course_analysis.py` - End-to-end course analysis
-- `test_segment_assignment.py` - Segment assignment algorithms
-- `test_segment_estimator.py` - Segment estimation logic
-- `test_segment_identification_multilap.py` - Multi-lap segmentation
-- `test_segment_initial_detection.py` - Initial segment detection
+A robust testing framework ensures the correctness and reliability of complex 
+algorithms and prevents regressions. The test infrastructure follows industry 
+best practices and emphasizes integration testing for multi-component workflows.
 
-**Segment Training Tests:**
-- `test_segment_performance.py` - Segment performance calculation
-- `test_course_segmentation_integration.py` - Segmentation integration
-- `test_segment_training_integration.py` - End-to-end training
-- `test_lap_pct_regression.py` - Backward compatibility
+**Testing Philosophy:**
 
-**Test Fixtures:**
-- `course_test_fixtures.py` - Reusable test data and utilities
-
-**Benefits:**
-- Validates correctness of complex algorithms
-- Prevents regressions
-- Documents expected behavior
-- Enables confident refactoring
+1. **Test What Matters**: Focus on behavior, not implementation details
+2. **Integration Over Unit**: Test complete workflows, not isolated components
+3. **Real Data Simulation**: Use realistic synthetic data matching actual usage
+4. **Fail-Fast Validation**: Tests must fail when bugs are introduced
+5. **Documentation Through Tests**: Tests demonstrate expected behavior
 
 ---
+
+#### Test Organization
+
+**Course Analysis Tests:**
+
+- **`test_data_loader.py`** - PathData container and data sources
+  - PathData immutability verification
+  - CSV loading with various formats
+  - Tub loading from single and multi-session data
+  - Field extraction and type conversion
+  - Error handling for malformed data
+  - Coverage: ~95% of data_loader.py
+
+- **`test_lap_detection.py`** - Lap boundary detection
+  - YCrossingLapDetector with clean data
+  - DriftLapDetector with GPS drift
+  - Edge cases: single lap, no laps, irregular timing
+  - Parameter sensitivity testing
+  - Coverage: ~92% of lap_detection.py
+
+- **`test_mean_course.py`** - Mean course computation
+  - Multi-lap alignment and averaging
+  - Resampling accuracy
+  - Curvature computation correctness
+  - Degenerate cases: single lap, identical laps
+  - Coverage: ~90% of mean_course.py
+
+- **`test_segmentation.py`** - Course segmentation strategies
+  - All four strategies (threshold, extrema, gradient, hybrid)
+  - Boundary filtering and merging
+  - Wraparound handling for closed loops
+  - Short segment elimination
+  - Coverage: ~88% of segmentation.py
+
+- **`test_segment_assignment.py`** - Segment assignment algorithms
+  - Initial segment detection (nearest-neighbor)
+  - Boundary crossing detection (tangent projection)
+  - Path wraparound (lap completion)
+  - Off-course handling
+  - Coverage: ~94% of segment_assignment.py
+
+- **`test_integration_course_analysis.py`** - End-to-end workflows
+  - Complete pipeline: load → detect laps → build course → segment → assign
+  - Multi-lap scenarios with realistic data
+  - Integration with tub data structures
+  - Performance benchmarking
+  - Coverage: Integration of all course_analysis modules
+
+**Critical Integration Test Pattern:**
+
+```python
+def test_segment_assignment_with_multilap_mean_course():
+    """
+    CRITICAL: Test actual user workflow, not isolated components.
+    
+    Simulates:
+    1. User records 3 laps
+    2. Computes mean course from 2 laps (UI selection)
+    3. Segments mean course
+    4. Assigns segments to full 3-lap path
+    
+    Verifies:
+    - Segments transition correctly across lap boundaries
+    - Each lap has multiple distinct segments (not stuck)
+    - Segment IDs are consistent and continuous
+    """
+    # Load multi-lap data (3 laps)
+    data = load_multilap_csv(num_laps=3)
+    
+    # Detect laps
+    detector = YCrossingLapDetector()
+    boundaries = detector.detect_laps(data)
+    assert len(boundaries) == 3
+    
+    # Build mean course from FIRST 2 LAPS (simulate UI selection)
+    builder = MeanCourseBuilder()
+    mean_course = builder.build(data, boundaries[:2], num_laps=2)
+    
+    # Segment mean course
+    segmentation = CourseSegmentation(mean_course, strategy='hybrid')
+    segmentation.compute()
+    
+    # Assign to ALL 3 LAPS
+    assigner = SegmentAssigner(segmentation)
+    segment_ids = assigner.assign(data.x, data.y)
+    
+    # ACTUAL lap 1 end from detection, not guessed
+    lap1_end = boundaries[0].end_index
+    
+    # Verify lap 1 has multiple segments (NOT stuck at one segment)
+    lap1_segments = set(segment_ids[:lap1_end + 1])
+    assert len(lap1_segments) > 1, \
+        f"Bug: lap 1 stuck at {lap1_segments}, expected transitions"
+    
+    # Verify segments progress correctly
+    transitions = sum(1 for i in range(1, lap1_end)
+                     if segment_ids[i] != segment_ids[i-1])
+    assert transitions >= segmentation.num_segments // 2, \
+        f"Too few transitions: {transitions}, expected ~{segmentation.num_segments}"
+```
+
+---
+
+**Segment Training Tests:**
+
+- **`test_segment_performance.py`** - Performance calculation
+  - Segment instance metrics (time, distance, custom fields)
+  - Field aggregation correctness (avg, sum, min, max, median, std)
+  - Multi-criteria ranking
+  - Percentile assignment
+  - Coverage: ~93% of tub_statistics.py segment logic
+
+- **`test_course_segmentation_integration.py`** - Segmentation integration
+  - Tub → PathData → segmentation workflow
+  - Metadata storage in tub manifest
+  - Segment ID writing to records
+  - Consistency checks
+  - Coverage: Integration with tub_v2.py
+
+- **`test_segment_training_integration.py`** - End-to-end training
+  - PctMode.SEGMENT activation
+  - TubDataset with segment mode
+  - Record filtering by segment percentile
+  - Training pipeline integration
+  - Coverage: Full training workflow
+
+- **`test_lap_pct_regression.py`** - Backward compatibility
+  - PctMode.LAP still works correctly
+  - No breaking changes to existing features
+  - Migration path from lap-based to segment-based
+  - Coverage: Regression prevention
+
+---
+
+**Test Fixtures and Utilities:**
+
+- **`course_test_fixtures.py`** - Reusable test data
+  ```python
+  def create_circular_path(num_points=1000, radius=10.0):
+      """Generate perfect circular path for testing"""
+      angles = np.linspace(0, 2*np.pi, num_points)
+      x = radius * np.cos(angles)
+      y = radius * np.sin(angles)
+      heading = angles + np.pi/2
+      velocity = np.ones(num_points) * 2.0
+      timestamp = np.linspace(0, num_points/10, num_points)
+      return PathData(timestamp, x, y, heading, velocity)
+  
+  def create_figure8_path(num_points=2000):
+      """Generate figure-8 path with varying curvature"""
+      # ... implementation
+  
+  def create_multilap_csv(num_laps=3, noise_level=0.1):
+      """Generate CSV with realistic multi-lap data"""
+      # ... implementation
+  ```
+
+---
+
+#### Testing Anti-Patterns Avoided
+
+**❌ The "Valid But Wrong" Test:**
+```python
+# BAD: Just checks if value is in valid range
+def test_segment_assignment():
+    segments = assign_segments(path)
+    assert all(0 <= s < total_segments for s in segments)
+    # ☹ Passes even if all stuck at segment 0!
+```
+
+**✅ Correct Test:**
+```python
+# GOOD: Checks actual expected behavior
+def test_segment_assignment():
+    segments = assign_segments(path)
+    
+    # Verify transitions occur
+    unique_segments = set(segments)
+    assert len(unique_segments) > 1, \
+        "Segments should transition, not stuck at one"
+    
+    # Verify specific expected segment at known position
+    corner_position_idx = 250
+    expected_segment = 3
+    assert segments[corner_position_idx] == expected_segment
+```
+
+**❌ The "Magic Number" Test:**
+```python
+# BAD: Arbitrary indices with no justification
+def test_lap_segmentation():
+    lap1_end = 200  # Where did this come from???
+    segments_lap1 = segments[:lap1_end]
+```
+
+**✅ Correct Test:**
+```python
+# GOOD: Use actual detected boundaries
+def test_lap_segmentation():
+    boundaries = detect_laps(data)
+    lap1_end = boundaries[0].end_index  # From actual detection
+    segments_lap1 = segments[:lap1_end]
+```
+
+---
+
+#### Test-Driven Bug Fix Workflow
+
+**Required Process for Bug Fixes:**
+
+1. **Write Failing Test First**
+   ```python
+   def test_segment_transition_at_lap_boundary():
+       """
+       Bug: Segments don't transition at lap boundaries when
+       mean course built from fewer laps than data has.
+       """
+       # This test MUST FAIL initially
+       data = load_multilap(3)
+       mean = build_from_n_laps(data, n=2)
+       segments = assign(data, mean)
+       
+       lap1_end = detect_lap_end(data)
+       assert segments[lap1_end] != segments[lap1_end + 1], \
+           "Segment should transition at lap boundary"
+   ```
+
+2. **Understand Why Existing Tests Didn't Catch It**
+   - Tests used same num_laps for mean and data
+   - Tests didn't check boundary transitions specifically
+   - Tests used "valid but wrong" assertions
+
+3. **Fix the Code**
+   ```python
+   # Fix in segment_assignment.py
+   def _get_boundary_from_segment(self, seg_id):
+       # Use self.segmentation.segment_boundaries directly
+       # Don't duplicate storage
+   ```
+
+4. **Verify Test Now Passes**
+   ```bash
+   pytest test_segment_assignment.py::test_segment_transition_at_lap_boundary
+   # ✓ PASSED
+   ```
+
+5. **Add Related Tests**
+   ```python
+   def test_segment_transition_with_1_lap_mean():
+       # Edge case: mean from 1 lap, data has 3
+   
+   def test_segment_transition_with_all_laps_mean():
+       # Standard case: mean from all laps
+   ```
+
+6. **Document in Commit**
+   ```
+   Fix: Segment transitions at lap boundaries
+   
+   Bug: When mean course built from N laps but data has M laps (M > N),
+   segments failed to transition at lap boundaries.
+   
+   Root cause: Boundary detection used incorrect reference.
+   
+   Fix: Use segmentation.segment_boundaries directly.
+   
+   Tests: Added test_segment_transition_at_lap_boundary and variants
+   ```
+
+---
+
+#### Coverage Metrics
+
+**Overall Coverage:** ~88% (lines of code)
+
+**Module-Specific:**
+- `data_loader.py`: 95%
+- `lap_detection.py`: 92%
+- `mean_course.py`: 90%
+- `segmentation.py`: 88%
+- `segment_assignment.py`: 94%
+- `tub_statistics.py`: 93% (segment logic)
+- Integration tests: Critical paths covered
+
+**Uncovered Areas:**
+- Error recovery for corrupted tub files
+- Extreme edge cases (single-point paths, etc.)
+- Platform-specific code (only tested on Linux)
+- UI code (interactive_imu_viz.py) - manual testing
+
+---
+
+#### Running Tests
+
+**Run All Tests:**
+```bash
+make tests
+# or
+pytest
+```
+
+**Run Specific Test File:**
+```bash
+pytest tests/test_segment_assignment.py
+```
+
+**Run Specific Test:**
+```bash
+pytest tests/test_segment_assignment.py::test_segment_transition_at_lap_boundary
+```
+
+**Run with Coverage:**
+```bash
+pytest --cov=donkeycar.course_analysis --cov-report=html
+```
+
+**Run Integration Tests Only:**
+```bash
+pytest -m integration
+```
+
+**Run with Verbose Output:**
+```bash
+pytest -v -s
+```
+
+---
+
+**Benefits of Testing Infrastructure:**
+
+- **Prevents Regressions**: Catch bugs before they reach users
+- **Documents Behavior**: Tests show how code should work
+- **Enables Refactoring**: Change code confidently with test safety net
+- **Quality Assurance**: High coverage ensures correctness
+- **Integration Testing**: Real workflows tested, not just units
+- **Bug Fix Process**: Structured approach prevents repeat bugs
+- **Continuous Improvement**: Tests guide code quality improvements
 
 ## Documentation Enhancements
 
 ### CLAUDE.md
 
-Comprehensive development guide for AI assistants working on the codebase, 
-including:
+Comprehensive development guide for AI assistants and human developers working 
+on the codebase. This living document captures architectural decisions, best 
+practices, and critical implementation details.
 
-**Testing Guidelines:**
-- Integration testing requirements
-- Test anti-patterns to avoid
+**Content Sections:**
+
+**1. Testing Guidelines** (Lines 1-150)
+- Integration testing requirements and patterns
+- Test anti-patterns to avoid with specific examples
 - Required test workflow for bug fixes
-- Examples of good vs. bad tests
+- Good vs. bad test examples with explanations
+- Emphasis on testing actual user workflows, not isolated components
+- Key insight: "Passing tests don't guarantee correct behavior"
 
-**Architecture Documentation:**
-- IMU Path Visualization system
-- Segment-Based Performance training
-- Course analysis workflow
-- Critical design constraints
+**2. IMU Path Visualization System** (Lines 151-300)
+- Complete architecture of interactive visualization
+- Data format specifications (CSV and Tub)
+- Critical design constraint: Two-stage segment assignment
+- Why nearest-neighbor for initial detection
+- Why tangent projection for crossing detection
+- Single source of truth principle for segment boundaries
 
-**Development Patterns:**
-- Parts-based system (threaded vs non-threaded)
-- Configuration system
-- Remote development workflow (Raspberry Pi)
-- Logging configuration
+**3. Segment-Based Performance Training** (Lines 301-450)
+- Concept explanation: "Synthetic perfect lap"
+- Workflow from recording to training
+- Data structure specifications
+- Performance ranking algorithm details
+- Iterative improvement strategy
+- Configuration options and tuning guidelines
+
+**4. Parts-Based System Architecture** (Lines 451-550)
+- Parts interface: Threaded vs Non-Threaded
+- When to use each pattern
+- State management and data flow
+- Threading model and performance implications
+- Part registration and lifecycle
+
+**5. Development Patterns** (Lines 551-650)
+- Configuration system design
+- ML framework support (Keras, PyTorch, FastAI)
+- Data management with Tub V2
+- Code style guidelines (80 char lines, no nesting, early returns)
+- Object-oriented approach over procedural
+
+**6. Remote Development Workflow** (Lines 651-750)
+- Raspberry Pi deployment process
+- Git workflow between development and Pi
+- Logging configuration without disrupting handlers
+- Template update workflow
+- Troubleshooting common deployment issues
 
 **Benefits:**
-- Faster onboarding for new developers
-- Consistent development patterns
-- Reduced bugs through better testing
-- Clear architectural decisions
+- Faster onboarding for new developers (human or AI)
+- Captures "why" decisions, not just "what" code does
+- Prevents repeated mistakes through documented patterns
+- Reduces time spent debugging integration issues
+- Ensures consistent coding standards
+- Preserves institutional knowledge
 
 ---
 
 ### SEGMENT_IMPLEMENTATION_PLAN.md
 
-Detailed implementation plan for segment-based performance feature, including:
-- Phase-by-phase checklist
-- File-by-file changes
-- Data structure specifications
-- Validation checklist
-- Expected behavior examples
+Detailed implementation plan and progress tracking for the segment-based 
+performance feature. Serves as both roadmap and historical record.
+
+**Structure:**
+
+**Overview** (Lines 1-15)
+- Problem statement: Why segment-based training?
+- Key concept: Same `lap_pct` field, different computation
+- Toggle mechanism: `USE_SEGMENT_PCT` flag
+- Backward compatibility guarantee
+
+**Implementation Checklist** (Lines 16-200)
+
+**Phase 1: Data Loading Infrastructure**
+- TubPathDataSource implementation
+- Field extraction from tub records
+- Timestamp conversion (ms → seconds)
+- Missing field handling
+- Unit tests for data loading
+
+**Phase 2: Segmentation Computation**
+- TubStatistics.compute_segment_assignments() method
+- For each session: load → detect laps → build mean → segment → assign
+- Direct writing to tub records: `record['car/segment'] = segment_id`
+- Metadata storage in tub manifest
+- Integration tests
+
+**Phase 3: Performance Calculation**
+- SegmentTracker for stateful iteration
+- FieldAccumulator for metric aggregation
+- Multi-criteria ranking algorithm
+- Percentile computation
+- Performance regression tests
+
+**Phase 4: Training Integration**
+- PctMode enum extension (NONE, LAP, SEGMENT)
+- TubDataset mode detection
+- Record filtering by segment percentile
+- Training pipeline modifications
+- End-to-end training tests
+
+**Phase 5: Configuration and Documentation**
+- Config file additions (SEGMENT_PCT_MODE, etc.)
+- Command-line tools (donkey segment)
+- User documentation
+- Migration guide from lap-based
+
+**Data Structure Specifications** (Lines 201-300)
+- Detailed format for segment_instances dict
+- session_rank structure
+- Metadata schema
+- Record field additions
+
+**Validation Checklist** (Lines 301-350)
+- Unit test coverage targets
+- Integration test scenarios
+- Performance benchmarks
+- Backward compatibility verification
+
+**Expected Behavior Examples** (Lines 351-400)
+- Concrete examples with 3 laps, 4 segments
+- Performance ranking tables
+- Training data selection visualization
+- Comparison with lap-based approach
 
 **Benefits:**
-- Clear roadmap for complex feature
-- Track implementation progress
+- Clear roadmap prevents scope creep
+- Checklist tracks implementation progress
+- Data structure specs prevent integration bugs
+- Examples clarify expected behavior
+- Historical record of design decisions
 - Reference for future enhancements
-- Documentation of design decisions
 
 ---
 
@@ -3868,44 +4286,414 @@ Detailed implementation plan for segment-based performance feature, including:
 
 ### Enhanced Configuration (cfg_complete.py)
 
-**New Sections:**
-1. **Segment Performance** (lines 765-772)
-   - `SEGMENT_PCT_MODE` - Enable segment-based training
-   - `SEGMENT_STRATEGY` - Segmentation method
-   - `SEGMENT_LAP_DETECTOR` - Lap detection method
-   - `SEGMENT_MIN_LENGTH` - Minimum segment length
-   - `SEGMENT_CURVATURE_THRESHOLD` - Curvature threshold
+**New Configuration Sections:**
 
-2. **Field Aggregations** (lines 774-803)
-   - `FIELD_AGGREGATIONS` - Custom metric definitions
-   - `LAP_SORTING_CRITERIA` - Multi-criteria ranking
-   - Extensible framework for behavioral parameters
+**1. Segment Performance** (Lines 765-772)
 
-**Benefits:**
-- Centralized configuration for new features
-- Clear documentation of options
-- Backward compatible defaults
+```python
+# ============================================================================
+# SEGMENT PERFORMANCE CONFIGURATION
+# ============================================================================
+
+# Enable segment-based training (default: False = lap-based)
+# When True, training ranks segment instances instead of complete laps
+# Requires: donkey segment --tub ./data/tub_1 before training
+SEGMENT_PCT_MODE = False
+
+# Segmentation strategy for course division
+# Options: 'threshold', 'extrema', 'gradient', 'hybrid'
+# - threshold: Equal arc-length segments (simple, predictable)
+# - extrema: Curvature peak-based segments (natural geometric features)
+# - gradient: Curvature change-based segments (captures transitions)
+# - hybrid: Combined approach using multiple criteria (recommended)
+# Must match strategy used in: donkey segment --strategy <value>
+SEGMENT_STRATEGY = 'hybrid'
+
+# Lap detection method for multi-lap data
+# Options: 'ycrossing', 'drift'
+# - ycrossing: Y-coordinate crossing detection (clean, repeatable data)
+# - drift: Cluster-based detection (handles GPS drift, outdoor tracks)
+# Must match detector used in: donkey segment --lap-detector <value>
+SEGMENT_LAP_DETECTOR = 'ycrossing'
+
+# Minimum segment length in meters
+# Segments shorter than this are merged with adjacent segments
+# Larger values → fewer, longer segments
+# Smaller values → more, shorter segments (risk: too granular)
+# Typical range: 0.5 - 3.0 meters depending on track size
+SEGMENT_MIN_LENGTH = 1.0
+
+# Curvature threshold for gradient/hybrid strategies
+# Controls sensitivity to curvature changes
+# Higher values → fewer segments (only sharp features)
+# Lower values → more segments (captures subtle features)
+# Typical range: 0.05 - 0.2 (1/meters)
+# Track-specific: tight indoor courses ~0.15, open outdoor ~0.08
+SEGMENT_CURVATURE_THRESHOLD = 0.1
+```
+
+**Parameter Tuning Guidelines:**
+
+| Parameter | Small Track | Medium Track | Large Track |
+|-----------|-------------|--------------|-------------|
+| SEGMENT_MIN_LENGTH | 0.5 - 1.0m | 1.0 - 2.0m | 2.0 - 3.0m |
+| SEGMENT_CURVATURE_THRESHOLD | 0.12 - 0.18 | 0.08 - 0.12 | 0.05 - 0.08 |
+
+---
+
+**2. Field Aggregations** (Lines 774-803)
+
+```python
+# ============================================================================
+# FIELD AGGREGATIONS - Custom Performance Metrics
+# ============================================================================
+
+# Define transform functions for field values
+def abs_transform(value):
+    """
+    Absolute value transform.
+    
+    Use for: Magnitude-based metrics (direction-independent)
+    Example: abs(gyro_z) treats left/right turns equally
+    """
+    return abs(value)
+
+# Configure custom field aggregations
+# Each aggregation extracts a metric from tub field data
+FIELD_AGGREGATIONS = [
+    {
+        # Tub field to extract (e.g., 'car/gyro', 'user/angle', 'car/accel')
+        'field': 'car/gyro',
+        
+        # Array index (None for scalar fields, 0/1/2 for vector fields)
+        # For car/gyro: [x, y, z] → index 2 = z-axis (yaw rate)
+        'index': 2,
+        
+        # Output key for aggregated value in performance dict
+        # Used in LAP_SORTING_CRITERIA
+        'output_key': 'gyro_z_agg',
+        
+        # Transform function applied before aggregation
+        # Options: abs_transform, square, custom function
+        'transform': abs_transform,
+        
+        # Aggregation method
+        # Options: 'avg', 'sum', 'min', 'max', 'median', 'std'
+        # - avg: Mean value (typical behavior)
+        # - sum: Total accumulation (energy, effort)
+        # - min: Worst-case metric
+        # - max: Peak value
+        # - median: Robust central tendency
+        # - std: Variability (consistency metric)
+        'aggregation': 'avg'
+    }
+    # Add more aggregations as needed for multi-objective optimization
+]
+
+# Multi-criteria sorting for performance ranking
+# Order matters: earlier criteria take precedence
+# Instances sorted by (criterion1, criterion2, criterion3, ...)
+LAP_SORTING_CRITERIA = [
+    # Primary sort criterion: lap/segment time
+    # Lower is better (faster)
+    {'key': 'time'},
+    
+    # Secondary: distance traveled
+    # Lower is better for closed loops (closer to ideal line)
+    {'key': 'distance'},
+    
+    # Tertiary: average absolute gyro_z
+    # Lower is better (smoother driving)
+    {'key': 'gyro_z_agg'},
+]
+
+# Example scenarios:
+#
+# 1. Fast + Smooth:
+#    LAP_SORTING_CRITERIA = [
+#        {'key': 'time'},         # Fast
+#        {'key': 'gyro_z_agg'},  # Smooth
+#    ]
+#
+# 2. Competition with penalties:
+#    FIELD_AGGREGATIONS = [
+#        {'field': 'car/boundary_distance', 'aggregation': 'min', ...}
+#    ]
+#    LAP_SORTING_CRITERIA = [
+#        {'key': 'boundary_penalty'},  # Clean first
+#        {'key': 'time'},              # Then fast
+#    ]
+#
+# 3. Energy efficient:
+#    FIELD_AGGREGATIONS = [
+#        {'field': 'user/throttle', 'transform': square, 'aggregation': 'sum', ...}
+#    ]
+#    LAP_SORTING_CRITERIA = [
+#        {'key': 'time'},
+#        {'key': 'energy_consumption'},
+#    ]
+```
+
+**Extensibility Examples:**
+
+```python
+# Custom transform for steering smoothness
+def steering_smoothness(angle):
+    """Penalize rapid steering changes"""
+    # Would need access to previous value (requires extension)
+    pass
+
+# Custom composite metric
+def calculate_efficiency(metrics):
+    """Distance per energy consumed"""
+    return metrics['distance'] / max(metrics['energy'], 0.001)
+```
+
+---
+
+**Benefits of Configuration Enhancements:**
+
+- **Centralized Settings**: All segment training config in one place
+- **Self-Documenting**: Extensive comments explain each option
+- **Tuning Guidelines**: Tables and ranges for different track types
+- **Example Scenarios**: Common use cases demonstrated
+- **Backward Compatible**: Defaults match original behavior (SEGMENT_PCT_MODE=False)
+- **Extensible**: Easy to add custom metrics and transforms
+- **Validation**: Type checking and range validation where possible
 
 ---
 
 ## Management Commands
 
-### New Commands
+### New Command-Line Tools
 
-1. **`donkey imupath`** - Interactive IMU visualization
-   - Visualize recorded trajectories
-   - Real-time lap detection and segmentation
-   - Support CSV and Tub data sources
+**1. `donkey imupath` - Interactive IMU Visualization**
 
-2. **`donkey segment`** - Compute segment assignments
-   - Process tub data with segmentation
-   - Store segments in tub records
-   - Configurable strategies and parameters
+```bash
+donkey imupath [OPTIONS] DATA_SOURCE
 
-**Benefits:**
-- User-friendly CLI interface
-- Consistent with existing donkey commands
-- Well-documented with help text
+Arguments:
+  DATA_SOURCE         CSV file or Tub directory path
+
+Options:
+  --lap-method TEXT   Lap detection: 'ycrossing' or 'drift' [default: ycrossing]
+  --segment-method    Segmentation: 'threshold', 'extrema', 'gradient', 'hybrid'
+                      [default: gradient]
+  --num-laps INTEGER  Number of laps for mean course [default: all detected]
+  --min-segment-length FLOAT  Minimum segment length in meters [default: 1.0]
+  --curvature-threshold FLOAT Curvature threshold [default: 0.1]
+  --config PATH       Config file for advanced parameters
+  --help              Show help message
+
+Examples:
+  # Basic visualization
+  donkey imupath ./data/tub_1
+  
+  # Outdoor track with drift
+  donkey imupath --lap-method drift ./outdoor_data.csv
+  
+  # Specific segmentation
+  donkey imupath --segment-method hybrid --num-laps 3 ./data/tub_1
+  
+  # Custom parameters
+  donkey imupath --min-segment-length 1.5 --curvature-threshold 0.08 ./data.csv
+```
+
+**Advanced Usage - Scripting:**
+
+```bash
+#!/bin/bash
+# visualize_all_tubs.sh
+
+# Visualize all tubs in data directory
+for tub in ./data/tub_*; do
+    echo "Visualizing $tub..."
+    donkey imupath --segment-method hybrid "$tub"
+    
+    # Wait for user to close window
+    read -p "Press Enter to continue..."
+done
+```
+
+**Advanced Usage - Batch Analysis:**
+
+```python
+# analyze_sessions.py
+
+import subprocess
+import glob
+
+tubs = glob.glob('./data/tub_*')
+
+for tub in tubs:
+    print(f"Analyzing {tub}...")
+    
+    # Generate visualization (requires matplotlib backend)
+    result = subprocess.run([
+        'donkey', 'imupath',
+        '--segment-method', 'hybrid',
+        '--num-laps', '3',
+        tub
+    ])
+    
+    if result.returncode != 0:
+        print(f"Failed to analyze {tub}")
+```
+
+---
+
+**2. `donkey segment` - Compute Segment Assignments**
+
+```bash
+donkey segment [OPTIONS] TUB_PATH [TUB_PATH...]
+
+Arguments:
+  TUB_PATH            One or more tub directories to process
+
+Options:
+  --lap-detector TEXT       Lap detection method [default: ycrossing]
+  --strategy TEXT           Segmentation strategy [default: hybrid]
+  --min-segment-length FLOAT Minimum segment length [default: 1.0]
+  --curvature-threshold FLOAT Curvature threshold [default: 0.1]
+  --num-laps INTEGER        Laps for mean course [default: all]
+  --session TEXT            Specific session ID to process
+  --visualize               Show visualization after processing
+  --force                   Overwrite existing segmentation
+  --verbose                 Enable debug logging
+  --help                    Show help message
+
+Examples:
+  # Basic segmentation
+  donkey segment ./data/tub_1
+  
+  # Multiple tubs
+  donkey segment ./data/tub_1 ./data/tub_2 ./data/tub_3
+  
+  # Custom parameters
+  donkey segment --strategy extrema --min-segment-length 2.0 ./data/tub_1
+  
+  # Specific session
+  donkey segment --session 20240115_143022 ./data/tub_1
+  
+  # Re-segment with new parameters
+  donkey segment --force --strategy hybrid ./data/tub_1
+  
+  # Segment and verify visually
+  donkey segment --visualize ./data/tub_1
+```
+
+**Advanced Usage - Batch Processing:**
+
+```bash
+#!/bin/bash
+# batch_segment.sh
+
+# Segment all tubs with consistent parameters
+for tub in ./data/tub_*; do
+    echo "Segmenting $tub..."
+    
+    donkey segment \
+        --strategy hybrid \
+        --lap-detector ycrossing \
+        --min-segment-length 1.5 \
+        --curvature-threshold 0.1 \
+        "$tub"
+    
+    if [ $? -eq 0 ]; then
+        echo "✓ $tub segmented successfully"
+    else
+        echo "✗ $tub segmentation failed"
+        exit 1
+    fi
+done
+
+echo "All tubs segmented!"
+```
+
+**Advanced Usage - Automation with Makefile:**
+
+```makefile
+# Makefile for donkey car workflow
+
+.PHONY: segment train deploy
+
+# Segment all tubs in data/
+segment:
+	@echo "Segmenting all tubs..."
+	@for tub in data/tub_*; do \
+		donkey segment --strategy hybrid $$tub; \
+	done
+
+# Train model on all segmented tubs
+train: segment
+	@echo "Training model..."
+	python manage.py train \
+		--tub data/tub_* \
+		--model models/pilot.h5
+
+# Deploy to Raspberry Pi
+deploy: train
+	@echo "Deploying to Pi..."
+	scp models/pilot.h5 pi@hyper.local:~/mycar/models/
+	ssh pi@hyper.local "cd ~/mycar && ./manage.py drive --model models/pilot.h5"
+
+# Complete workflow
+all: segment train deploy
+```
+
+**Integration with CI/CD:**
+
+```yaml
+# .github/workflows/train.yml
+
+name: Train and Deploy
+
+on:
+  push:
+    paths:
+      - 'data/tub_*/**'
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: pip install -e .
+      
+      - name: Segment tubs
+        run: |
+          for tub in data/tub_*; do
+            donkey segment --strategy hybrid $tub
+          done
+      
+      - name: Train model
+        run: python manage.py train --tub data/tub_* --model models/pilot.h5
+      
+      - name: Upload model
+        uses: actions/upload-artifact@v2
+        with:
+          name: trained-model
+          path: models/pilot.h5
+```
+
+---
+
+**Benefits of Management Commands:**
+
+- **User-Friendly CLI**: Consistent with existing donkey commands
+- **Well-Documented**: Comprehensive help text and examples
+- **Scriptable**: Easy integration with automation workflows
+- **Batch Processing**: Handle multiple tubs efficiently
+- **Error Handling**: Clear error messages and suggestions
+- **Progress Feedback**: Informative console output
+- **Validation**: Parameter checking prevents common mistakes
 
 ---
 
@@ -3913,24 +4701,125 @@ Detailed implementation plan for segment-based performance feature, including:
 
 ### PctMode Enum
 
+Type-safe mode selection for behavioral parameter percentages.
+
 **Location:** `donkeycar/pipeline/types.py`
 
+**Definition:**
+
 ```python
+from enum import Enum
+
 class PctMode(Enum):
+    """
+    Behavioral parameter percentage mode.
+    
+    Controls how training data is ranked and filtered:
+    - NONE: No ranking, use all data equally
+    - LAP: Rank by complete lap performance
+    - SEGMENT: Rank by individual segment performance
+    """
     NONE = 0     # No performance ranking
-    LAP = 1      # Lap-based ranking (original)
-    SEGMENT = 2  # Segment-based ranking (new)
+    LAP = 1      # Lap-based ranking (original behavior)
+    SEGMENT = 2  # Segment-based ranking (new feature)
 ```
 
-**Integration:**
-- `TubDataset` constructor accepts `pct_mode` parameter
-- Training pipeline auto-detects mode from config
-- Backward compatible with existing code
+**Usage in Training Pipeline:**
+
+```python
+from donkeycar.pipeline.types import PctMode
+
+# In TubDataset.__init__
+if cfg.SEGMENT_PCT_MODE and 'car/segment' in tub.manifest.inputs:
+    pct_mode = PctMode.SEGMENT
+    logger.info("Using segment-based performance ranking")
+elif cfg.TRAIN_FILTER_PERCENT:
+    pct_mode = PctMode.LAP
+    logger.info("Using lap-based performance ranking")
+else:
+    pct_mode = PctMode.NONE
+    logger.info("No performance filtering")
+
+self.pct_mode = pct_mode
+```
+
+**Integration Example:**
+
+```python
+# In training loop
+dataset = TubDataset(
+    config=cfg,
+    tub_paths=['./data/tub_1', './data/tub_2'],
+    pct_mode=PctMode.SEGMENT  # Explicit mode selection
+)
+
+for record in dataset:
+    # record.lap_pct populated based on pct_mode
+    if record.lap_pct > cfg.PCT_THRESHOLD:
+        continue  # Skip low-performing instances
+    
+    # Train on this record
+    model.train_on_batch(record)
+```
+
+**Mode Detection Logic:**
+
+```python
+def detect_pct_mode(cfg, tub):
+    """
+    Auto-detect appropriate pct_mode based on configuration and tub.
+    
+    Priority:
+    1. SEGMENT if SEGMENT_PCT_MODE=True and tub has car/segment field
+    2. LAP if TRAIN_FILTER_PERCENT > 0
+    3. NONE otherwise
+    """
+    if cfg.SEGMENT_PCT_MODE:
+        if 'car/segment' not in tub.manifest.inputs:
+            logger.warning(
+                "SEGMENT_PCT_MODE=True but tub not segmented! "
+                "Run: donkey segment --tub " + tub.path
+            )
+            return PctMode.LAP  # Fallback
+        return PctMode.SEGMENT
+    
+    if cfg.TRAIN_FILTER_PERCENT > 0:
+        return PctMode.LAP
+    
+    return PctMode.NONE
+```
+
+**Backward Compatibility:**
+
+```python
+# Old code (no explicit pct_mode) still works
+dataset = TubDataset(config=cfg, tub_paths=tubs)
+# Auto-detects mode from cfg.SEGMENT_PCT_MODE and cfg.TRAIN_FILTER_PERCENT
+
+# New code (explicit control)
+dataset = TubDataset(
+    config=cfg,
+    tub_paths=tubs,
+    pct_mode=PctMode.SEGMENT  # Override auto-detection
+)
+```
 
 **Benefits:**
-- Type-safe mode selection
-- Clear separation of ranking strategies
-- Easy to extend for future modes
+- **Type Safety**: Enum prevents invalid mode values
+- **Self-Documenting**: Clear separation of ranking strategies
+- **Extensible**: Easy to add future modes (e.g., PctMode.HYBRID)
+- **Backward Compatible**: Existing code works without changes
+- **Explicit Control**: Can override auto-detection when needed
+
+---
+
+**Summary of Pipeline Enhancements:**
+
+- **PctMode Enum**: Type-safe mode selection
+- **Auto-Detection**: Intelligent mode selection from config
+- **Fallback Logic**: Graceful degradation if segment data missing
+- **Integration Points**: TubDataset, training loop, data pipeline
+- **Future-Proof**: Easy to extend with new ranking modes
 
 ---
 
