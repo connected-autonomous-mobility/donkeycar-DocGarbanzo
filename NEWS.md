@@ -67,6 +67,46 @@ A comprehensive system for analyzing recorded driving data and computing geometr
 
 **Location:** `donkeycar/course_analysis/`
 
+**Usage Example:**
+
+```python
+from donkeycar.course_analysis import (
+    TubPathDataSource,
+    YCrossingLapDetector,
+    MeanCourseBuilder,
+    CourseSegmentation,
+    SegmentAssigner
+)
+
+# Load trajectory data from tub
+data_source = TubPathDataSource('./data/tub_1')
+path_data = data_source.load()
+
+# Detect laps
+lap_detector = YCrossingLapDetector(params={'min_lap_duration': 8.0})
+lap_boundaries = lap_detector.detect_laps(path_data)
+
+# Build mean course from first 3 laps
+builder = MeanCourseBuilder(params={'resample_points': 750})
+mean_course = builder.build(path_data, lap_boundaries, num_laps=3)
+
+# Segment the course
+segmentation = CourseSegmentation(
+    mean_course=mean_course,
+    strategy='hybrid',
+    params={'min_segment_length': 2.0}
+)
+segmentation.compute()
+
+# Assign segments to driven path
+assigner = SegmentAssigner(segmentation)
+segment_ids = assigner.assign(path_data.x, path_data.y)
+
+print(f"Detected {len(lap_boundaries)} laps")
+print(f"Course length: {mean_course.distance[-1]:.2f} m")
+print(f"Created {segmentation.num_segments} segments")
+```
+
 **Architecture Diagram:** See [full documentation](news_01_course_analysis.md) for complete workflow diagrams.
 
 ---
@@ -102,6 +142,24 @@ graph LR
 - 5 laps: 5-10% improvement  
 - 10 laps: 10-15% improvement
 
+**Usage Example:**
+
+```bash
+# Step 1: Record training data with IMU
+cd ~/mycar
+python manage.py drive --tub ./data
+
+# Step 2: Compute segment assignments
+donkey segment --tub ./data/tub_1 --strategy hybrid
+
+# Step 3: Configure training (add to myconfig.py)
+# SEGMENT_PCT_MODE = True
+# SEGMENT_STRATEGY = 'hybrid'
+
+# Step 4: Train with segment-based performance
+python manage.py train --tub ./data/tub_1 --model ./models/pilot.h5
+```
+
 **See Full Documentation:** Complete workflow diagrams, configuration guide, and troubleshooting in [news_02_segment_training.md](news_02_segment_training.md).
 
 ---
@@ -127,6 +185,22 @@ Interactive visualization tool for analyzing recorded trajectories with real-tim
 - Verify training data quality
 - Analyze driving performance
 - Debug algorithm behavior
+
+**Usage Example:**
+
+```bash
+# Basic visualization from CSV
+donkey imupath ./recordings/track_session.csv
+
+# Visualize tub with custom settings
+donkey imupath --lap-method drift \
+               --segment-method hybrid \
+               --num-laps 3 \
+               ./data/tub_1
+
+# Visualize specific tub session
+donkey imupath ./data/tub_1 --session 20240115_143022
+```
 
 **UI Preview:** See [full documentation](news_03_imu_viz.md) for complete interface diagram and usage examples.
 

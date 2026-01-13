@@ -183,6 +183,29 @@ donkey imupath \
     ./outdoor_track.csv
 ```
 
+### Programmatic Usage
+
+```python
+from donkeycar.course_analysis import TubPathDataSource
+from donkeycar.utilities.interactive_imu_viz import InteractiveIMUVisualizer
+
+# Load data
+data_source = TubPathDataSource('./data/tub_1')
+path_data = data_source.load()
+
+# Create visualizer with custom settings
+viz = InteractiveIMUVisualizer(
+    path_data=path_data,
+    lap_method='ycrossing',
+    segment_method='hybrid',
+    num_laps=3,
+    min_segment_length=1.5
+)
+
+# Show interactive visualization
+viz.show()
+```
+
 ---
 
 ## Data Sources and Formats

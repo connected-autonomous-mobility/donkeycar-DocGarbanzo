@@ -403,6 +403,8 @@ The tangent projection method is robust to cross-track errors:
 
 ## Example Usage
 
+### Basic Workflow
+
 ```python
 from donkeycar.course_analysis import (
     TubPathDataSource,
@@ -439,6 +441,72 @@ segment_ids = assigner.assign(path_data.x, path_data.y)
 print(f"Detected {len(lap_boundaries)} laps")
 print(f"Course length: {mean_course.distance[-1]:.2f} m")
 print(f"Created {segmentation.num_segments} segments")
+```
+
+### Loading from CSV
+
+```python
+from donkeycar.course_analysis import CSVPathDataSource
+
+# Load from CSV file (format: t,x,y,h,v)
+csv_source = CSVPathDataSource('./recordings/track_data.csv')
+path_data = csv_source.load()
+
+# Access immutable arrays
+print(f"Recording duration: {path_data.timestamp[-1]:.1f} seconds")
+print(f"Total distance: {np.sum(path_data.velocity * np.diff(path_data.timestamp, prepend=0)):.1f} meters")
+```
+
+### Using Drift Detector for GPS Data
+
+```python
+from donkeycar.course_analysis import DriftLapDetector
+
+# For outdoor tracks with GPS drift
+drift_detector = DriftLapDetector(params={
+    'window_size': 50,
+    'min_lap_duration': 10.0,
+    'cluster_eps': 3.0,
+    'cluster_min_samples': 3
+})
+
+lap_boundaries = drift_detector.detect_laps(path_data)
+print(f"Found {len(lap_boundaries)} laps with drift-tolerant detection")
+```
+
+### Comparing Segmentation Strategies
+
+```python
+from donkeycar.course_analysis import (
+    ThresholdSegmentation,
+    ExtremaSegmentation,
+    GradientSegmentation,
+    HybridSegmentation
+)
+
+strategies = {
+    'threshold': ThresholdSegmentation(mean_course, {'min_segment_length': 2.0}),
+    'extrema': ExtremaSegmentation(mean_course, {'min_segment_length': 2.0}),
+    'gradient': GradientSegmentation(mean_course, {'curvature_threshold': 0.1}),
+    'hybrid': HybridSegmentation(mean_course, {'min_segment_length': 2.0})
+}
+
+for name, strategy in strategies.items():
+    strategy.compute()
+    print(f"{name}: {strategy.num_segments} segments")
+```
+
+### Analyzing Segment Properties
+
+```python
+# After computing segmentation
+for segment in segmentation.segments:
+    length = segment.end_distance - segment.start_distance
+    print(f"Segment {segment.segment_id}:")
+    print(f"  Type: {segment.segment_type}")
+    print(f"  Length: {length:.2f} m")
+    print(f"  Mean curvature: {segment.mean_curvature:.3f}")
+    print(f"  Max curvature: {segment.max_curvature:.3f}")
 ```
 
 ---
