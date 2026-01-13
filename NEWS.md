@@ -73,37 +73,37 @@ A comprehensive system for analyzing recorded driving data and computing geometr
 from donkeycar.course_analysis import (
     TubPathDataSource,
     YCrossingLapDetector,
+    MultiLapData,
     MeanCourseBuilder,
-    CourseSegmentation,
+    CourseSegmenter,
     SegmentAssigner
 )
 
 # Load trajectory data from tub
 data_source = TubPathDataSource('./data/tub_1')
-path_data = data_source.load()
 
 # Detect laps
 lap_detector = YCrossingLapDetector(params={'min_lap_duration': 8.0})
-lap_boundaries = lap_detector.detect_laps(path_data)
+multilap_data = MultiLapData.from_source(data_source, lap_detector)
 
-# Build mean course from first 3 laps
-builder = MeanCourseBuilder(params={'resample_points': 750})
-mean_course = builder.build(path_data, lap_boundaries, num_laps=3)
+# Build mean course from all laps
+builder = MeanCourseBuilder(params={'resampling_interval': 0.1})
+mean_course = builder.build(multilap_data)
 
 # Segment the course
-segmentation = CourseSegmentation(
-    mean_course=mean_course,
+segmenter = CourseSegmenter(
     strategy='hybrid',
     params={'min_segment_length': 2.0}
 )
-segmentation.compute()
+segmentation = segmenter.segment(mean_course)
 
 # Assign segments to driven path
 assigner = SegmentAssigner(segmentation)
+path_data = multilap_data.path_data
 segment_ids = assigner.assign(path_data.x, path_data.y)
 
-print(f"Detected {len(lap_boundaries)} laps")
-print(f"Course length: {mean_course.distance[-1]:.2f} m")
+print(f"Detected {multilap_data.num_laps} laps")
+print(f"Course length: {mean_course.length:.2f} m")
 print(f"Created {segmentation.num_segments} segments")
 ```
 

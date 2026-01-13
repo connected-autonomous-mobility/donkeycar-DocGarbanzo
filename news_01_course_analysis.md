@@ -409,37 +409,35 @@ The tangent projection method is robust to cross-track errors:
 from donkeycar.course_analysis import (
     TubPathDataSource,
     YCrossingLapDetector,
+    MultiLapData,
     MeanCourseBuilder,
-    CourseSegmentation,
+    CourseSegmenter,
     SegmentAssigner
 )
 
-# 1. Load data
+# 1. Load data and detect laps
 data_source = TubPathDataSource('./data/tub_1')
-path_data = data_source.load()
+lap_detector = YCrossingLapDetector(params={'min_lap_duration': 8.0})
+multilap_data = MultiLapData.from_source(data_source, lap_detector)
 
-# 2. Detect laps
-detector = YCrossingLapDetector(params={'min_lap_duration': 8.0})
-lap_boundaries = detector.detect_laps(path_data)
+# 2. Build mean course
+builder = MeanCourseBuilder(params={'resampling_interval': 0.1})
+mean_course = builder.build(multilap_data)
 
-# 3. Build mean course from first 3 laps
-builder = MeanCourseBuilder(params={'resample_points': 750})
-mean_course = builder.build(path_data, lap_boundaries, num_laps=3)
-
-# 4. Segment the course
-segmentation = CourseSegmentation(
-    mean_course=mean_course,
+# 3. Segment the course
+segmenter = CourseSegmenter(
     strategy='hybrid',
     params={'min_segment_length': 2.0}
 )
-segmentation.compute()
+segmentation = segmenter.segment(mean_course)
 
-# 5. Assign segments to full path
+# 4. Assign segments to driven path
 assigner = SegmentAssigner(segmentation)
+path_data = multilap_data.path_data
 segment_ids = assigner.assign(path_data.x, path_data.y)
 
-print(f"Detected {len(lap_boundaries)} laps")
-print(f"Course length: {mean_course.distance[-1]:.2f} m")
+print(f"Detected {multilap_data.num_laps} laps")
+print(f"Course length: {mean_course.length:.2f} m")
 print(f"Created {segmentation.num_segments} segments")
 ```
 
@@ -447,6 +445,7 @@ print(f"Created {segmentation.num_segments} segments")
 
 ```python
 from donkeycar.course_analysis import CSVPathDataSource
+import numpy as np
 
 # Load from CSV file (format: t,x,y,h,v)
 csv_source = CSVPathDataSource('./recordings/track_data.csv')
@@ -454,15 +453,24 @@ path_data = csv_source.load()
 
 # Access immutable arrays
 print(f"Recording duration: {path_data.timestamp[-1]:.1f} seconds")
-print(f"Total distance: {np.sum(path_data.velocity * np.diff(path_data.timestamp, prepend=0)):.1f} meters")
+
+# Calculate total distance traveled
+distances = np.sqrt(np.diff(path_data.x)**2 + np.diff(path_data.y)**2)
+total_distance = np.sum(distances)
+print(f"Total distance: {total_distance:.1f} meters")
 ```
 
 ### Using Drift Detector for GPS Data
 
 ```python
-from donkeycar.course_analysis import DriftLapDetector
+from donkeycar.course_analysis import (
+    CSVPathDataSource,
+    DriftLapDetector,
+    MultiLapData
+)
 
 # For outdoor tracks with GPS drift
+data_source = CSVPathDataSource('./outdoor_gps_track.csv')
 drift_detector = DriftLapDetector(params={
     'window_size': 50,
     'min_lap_duration': 10.0,
@@ -470,30 +478,29 @@ drift_detector = DriftLapDetector(params={
     'cluster_min_samples': 3
 })
 
-lap_boundaries = drift_detector.detect_laps(path_data)
-print(f"Found {len(lap_boundaries)} laps with drift-tolerant detection")
+multilap_data = MultiLapData.from_source(data_source, drift_detector)
+print(f"Found {multilap_data.num_laps} laps with drift-tolerant detection")
+
+# Access individual laps
+for i in range(multilap_data.num_laps):
+    lap_data = multilap_data.get_lap(i)
+    lap_time = lap_data.timestamp[-1] - lap_data.timestamp[0]
+    print(f"Lap {i+1}: {lap_time:.2f} seconds")
 ```
 
 ### Comparing Segmentation Strategies
 
 ```python
-from donkeycar.course_analysis import (
-    ThresholdSegmentation,
-    ExtremaSegmentation,
-    GradientSegmentation,
-    HybridSegmentation
-)
+from donkeycar.course_analysis import CourseSegmenter
 
-strategies = {
-    'threshold': ThresholdSegmentation(mean_course, {'min_segment_length': 2.0}),
-    'extrema': ExtremaSegmentation(mean_course, {'min_segment_length': 2.0}),
-    'gradient': GradientSegmentation(mean_course, {'curvature_threshold': 0.1}),
-    'hybrid': HybridSegmentation(mean_course, {'min_segment_length': 2.0})
-}
+# Test different strategies on same mean course
+strategies_to_test = ['threshold', 'extrema', 'gradient', 'hybrid']
+params = {'min_segment_length': 2.0}
 
-for name, strategy in strategies.items():
-    strategy.compute()
-    print(f"{name}: {strategy.num_segments} segments")
+for strategy_name in strategies_to_test:
+    segmenter = CourseSegmenter(strategy=strategy_name, params=params)
+    segmentation = segmenter.segment(mean_course)
+    print(f"{strategy_name}: {segmentation.num_segments} segments")
 ```
 
 ### Analyzing Segment Properties
