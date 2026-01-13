@@ -258,6 +258,53 @@ LAP_SORTING_CRITERIA = [
 
 ## Validation and Debugging
 
+### Complete End-to-End Workflow
+
+```bash
+# 1. Record training data with custom sensor fields
+cd ~/mycar
+python manage.py drive --tub ./data
+
+# 2. Configure field aggregations in myconfig.py
+cat >> myconfig.py << 'EOF'
+
+# Field aggregations for multi-objective optimization
+FIELD_AGGREGATIONS = [
+    {
+        'field': 'car/gyro',
+        'index': 2,
+        'output_key': 'gyro_z_agg',
+        'transform': abs,
+        'aggregation': 'avg'
+    }
+]
+
+LAP_SORTING_CRITERIA = [
+    {'key': 'time'},
+    {'key': 'gyro_z_agg'},
+]
+EOF
+
+# 3. Compute segments with field aggregations
+donkey segment --tub ./data/tub_1 --config myconfig.py
+
+# 4. Verify metrics were calculated
+python -c "
+from donkeycar.parts.tub_v2 import Tub
+from donkeycar.parts.tub_statistics import TubStatistics
+from donkeycar.config import Config
+
+cfg = Config()
+tub = Tub('./data/tub_1')
+stats = TubStatistics(tub, cfg)
+perf = stats.calculate_segment_performance()
+print('Metrics available:', list(perf[list(perf.keys())[0]][0][0].keys()))
+"
+
+# 5. Train with segment-based performance
+python manage.py train --tub ./data/tub_1
+```
+
 ### Verify Metrics
 
 ```python

@@ -293,6 +293,43 @@ LAP_SORTING_CRITERIA = [
 python manage.py train --tub ./data/tub_1 --model ./models/pilot.h5
 ```
 
+### Programmatic Usage
+
+```python
+from donkeycar.parts.tub_v2 import Tub
+from donkeycar.parts.tub_statistics import TubStatistics
+from donkeycar.pipeline.types import PctMode
+from donkeycar.pipeline.training import TubDataset
+
+# Load tub and compute segment assignments
+tub = Tub('./data/tub_1')
+stats = TubStatistics(tub, cfg)
+
+# Compute segments if not already done
+if not stats.has_segments():
+    stats.compute_segment_assignments(
+        lap_detector='ycrossing',
+        strategy='hybrid',
+        min_segment_length=1.5
+    )
+
+# Calculate segment performance rankings
+performance = stats.calculate_segment_performance()
+
+# Create dataset with segment-based filtering
+dataset = TubDataset(
+    cfg,
+    tub_paths=['./data/tub_1'],
+    pct_mode=PctMode.SEGMENT
+)
+
+# Training loop uses dataset with best segment instances
+for record in dataset:
+    # record.lap_pct contains segment performance ranking
+    # Only records with lap_pct <= PCT_THRESHOLD are included
+    pass
+```
+
 ---
 
 ## How It Works: Deep Dive
