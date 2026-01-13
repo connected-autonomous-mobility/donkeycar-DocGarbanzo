@@ -5,6 +5,8 @@ DocGarbanzo fork compared to the original autorope/donkeycar repository.
 
 **📚 Detailed documentation for each feature is available in separate chapter files** - click the links below for complete information with diagrams and examples.
 
+**💻 For actual code usage examples**, see [USAGE.md](USAGE.md) which shows how each function and class is used in the codebase (no generic examples, only real code).
+
 ---
 
 ## Overview
